@@ -1,0 +1,7 @@
+backend/main/java/config: This directory holds configuration classes responsible for configuring the application, including database connections, security policies, and Spring framework settings.
+backend/main/java/controller: The controller layer resides here, managing HTTP requests. Its classes receive requests from the frontend, call relevant service methods to handle them, and return corresponding responses.
+backend/main/java/dao: This layer contains code for interacting with the database, executing operations like querying, inserting, updating, and deleting data.
+backend/main/java/model: Entity classes representing database tables are located here. Each class typically mirrors a table in the database, with its attributes mapping to the table columns.
+backend/main/java/service: The service layer handles business logic. It implements logic and often invokes DAO methods to interact with the database while processing business rules.
+backend/main/java/utils: Utility classes providing common functionalities like date handling, file operations, and encryption are stored in this directory.
+backend/resources: This directory hosts application resources such as configuration files and static resources. The application.properties file, for example, configures properties like database connection details and port numbers.
