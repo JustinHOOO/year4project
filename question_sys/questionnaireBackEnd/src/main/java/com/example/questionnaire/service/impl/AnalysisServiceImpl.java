@@ -13,29 +13,29 @@ import com.google.gson.JsonObject;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Array;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class AnalysisServiceImpl implements AnalysisService {
-
-    private final QuestionnaireDao questionnaireDao;
-    private final QuestionDao questionDao;
-    private final AnswerDao answerDao;
-    private final Gson gson;
+    final
+    QuestionnaireDao questionnaireDao;
+    final
+    QuestionDao questionDao;
+    final
+    AnswerDao answerDao;
+    Gson gson = new Gson();
 
     public AnalysisServiceImpl(QuestionnaireDao questionnaireDao, QuestionDao questionDao, AnswerDao answerDao) {
         this.questionnaireDao = questionnaireDao;
         this.questionDao = questionDao;
         this.answerDao = answerDao;
-        this.gson = new Gson();
     }
 
     @Override
     public String getQuestionnairesByUsername(String username) {
-        List<?> questionnaires = questionnaireDao.findAllByUsername(username);
         JsonObject res = new JsonObject();
-        res.add("questionnaires", gson.toJsonTree(questionnaires));
+        res.add("questionnaires", gson.fromJson(gson.toJson(questionnaireDao.findAllByUsername(username)), JsonArray.class));
         return gson.toJson(res);
     }
 
@@ -53,66 +53,76 @@ public class AnalysisServiceImpl implements AnalysisService {
     @Override
     public String getQuestionValueList(Integer questionId) {
         List<Answer> answerList = answerDao.findAllByQuestionId(questionId);
+
         Question question = questionDao.findDistinctByQuestionId(questionId);
         String questionType = question.getQuestionType();
 
-        switch (questionType) {
-            case "single_check":
-                return processSingleCheck(question, answerList);
-            case "multi_check":
-                return processMultiCheck(question, answerList);
-            case "number":
-            case "grade":
-                return processNumberGrade(answerList);
-            default:
-                return null;
+
+        if (questionType.equals("single_check")) {
+            Map<String, Integer> resValueMap = new HashMap<>();
+            JsonObject temp = gson.fromJson(question.getDetails(), JsonObject.class);
+            JsonArray questionOptionsJsonArray = temp.get("questionOptions").getAsJsonArray();
+            for (JsonElement questionOptionJson : questionOptionsJsonArray
+            ) {
+                String questionOption = questionOptionJson.getAsString();
+                resValueMap.put(questionOption, 0);
+            }
+            System.out.println(temp);
+            System.out.println(resValueMap);
+            for (Answer oneAnswer : answerList
+            ) {
+                String value = oneAnswer.getWriteValue();
+                Integer oldCount = resValueMap.get(value);
+                resValueMap.put(value, oldCount + 1);
+            }
+            return gson.toJson(resValueMap);
+        } else if (questionType.equals("multi_check")) {
+            Map<String, Integer> resValueMap = new HashMap<>();
+            JsonObject temp = gson.fromJson(question.getDetails(), JsonObject.class);
+            JsonArray questionOptionsJsonArray = temp.get("questionOptions").getAsJsonArray();
+            for (JsonElement questionOptionJson : questionOptionsJsonArray
+            ) {
+                String questionOption = questionOptionJson.getAsString();
+                resValueMap.put(questionOption, 0);
+            }
+            for (Answer oneAnswer : answerList
+            ) {
+                JsonArray valueList = gson.fromJson(oneAnswer.getWriteValue(), JsonArray.class);
+                for (JsonElement value : valueList
+                ) {
+                    Integer oldCount = resValueMap.get(value.getAsString());
+                    resValueMap.put(value.getAsString(), oldCount + 1);
+                }
+            }
+            return gson.toJson(resValueMap);
+        } else if (questionType.equals("number") || questionType.equals("grade")) {
+            Map<String, Double> resValueMap = new HashMap<>();
+            List<Double> valueList = new ArrayList<>();
+            Double sum = 0.0;
+            for (Answer oneAnswer : answerList
+            ) {
+                Double value = gson.fromJson(oneAnswer.getWriteValue(), Double.class);
+                valueList.add(value);
+                sum += value;
+            }
+            valueList.sort((a, b) -> (int) (a - b));
+            System.out.println(valueList);
+
+            if(valueList.size()==0){
+                resValueMap.put("Maximum", 0.0);
+                resValueMap.put("Minimum", 0.0);
+                resValueMap.put("Average", 0.0);
+                resValueMap.put("Median", 0.0);
+            }else{
+                resValueMap.put("Maximum", valueList.get(valueList.size() - 1));
+                resValueMap.put("Minimum", valueList.get(0));
+                resValueMap.put("Average", sum / valueList.size());
+                resValueMap.put("Median", valueList.get(valueList.size() / 2));
+            }
+
+            return gson.toJson(resValueMap);
         }
+        return null;
     }
 
-    private String processSingleCheck(Question question, List<Answer> answerList) {
-        Map<String, Integer> resValueMap = initOptionMap(question);
-        answerList.forEach(answer -> 
-            resValueMap.merge(answer.getWriteValue(), 1, Integer::sum)
-        );
-        return gson.toJson(resValueMap);
-    }
-
-    private String processMultiCheck(Question question, List<Answer> answerList) {
-        Map<String, Integer> resValueMap = initOptionMap(question);
-        answerList.forEach(answer -> {
-            JsonArray valueList = gson.fromJson(answer.getWriteValue(), JsonArray.class);
-            valueList.forEach(value -> 
-                resValueMap.merge(value.getAsString(), 1, Integer::sum)
-            );
-        });
-        return gson.toJson(resValueMap);
-    }
-
-    private String processNumberGrade(List<Answer> answerList) {
-        List<Double> values = answerList.stream()
-                .map(answer -> gson.fromJson(answer.getWriteValue(), Double.class))
-                .sorted()
-                .collect(Collectors.toList());
-
-        Map<String, Double> resValueMap = new HashMap<>();
-        double sum = values.stream().mapToDouble(Double::doubleValue).sum();
-        int size = values.size();
-
-        resValueMap.put("Maximum", size > 0 ? values.get(size - 1) : 0.0);
-        resValueMap.put("Minimum", size > 0 ? values.get(0) : 0.0);
-        resValueMap.put("Average", size > 0 ? sum / size : 0.0);
-        resValueMap.put("Median", size > 0 ? values.get(size / 2) : 0.0);
-
-        return gson.toJson(resValueMap);
-    }
-
-    private Map<String, Integer> initOptionMap(Question question) {
-        JsonObject temp = gson.fromJson(question.getDetails(), JsonObject.class);
-        JsonArray questionOptionsJsonArray = temp.get("questionOptions").getAsJsonArray();
-        Map<String, Integer> resValueMap = new HashMap<>();
-        questionOptionsJsonArray.forEach(option -> 
-            resValueMap.put(option.getAsString(), 0)
-        );
-        return resValueMap;
-    }
 }

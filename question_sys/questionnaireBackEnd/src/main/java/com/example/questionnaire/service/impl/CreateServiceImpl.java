@@ -18,11 +18,13 @@ import java.util.List;
 
 @Service
 public class CreateServiceImpl implements CreateService {
+    final
+    QuestionnaireDao questionnaireDao;
+    final
+    QuestionDao questionDao;
+    final Integer QuestionIdDigit = 1000;
 
-    private final QuestionnaireDao questionnaireDao;
-    private final QuestionDao questionDao;
-    private final Integer QUESTION_ID_DIGIT = 1000;
-    private final Gson gson = new Gson();
+    Gson gson = new Gson();
 
     public CreateServiceImpl(QuestionnaireDao questionnaireDao, QuestionDao questionDao) {
         this.questionnaireDao = questionnaireDao;
@@ -41,61 +43,69 @@ public class CreateServiceImpl implements CreateService {
 
         JsonObject res = new JsonObject();
         res.addProperty("id", newQuestionnaire.getQuestionnaireId());
+
         return gson.toJson(res);
     }
 
     @Override
     public String deleteQuestionnaire(Integer questionnaireId) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String currentUsername = authentication.getName();
-        Questionnaire questionnaire = questionnaireDao.findByQuestionnaireId(questionnaireId);
 
-        if (currentUsername.equals(questionnaire.getUsername())) {
-            questionnaireDao.deleteById(questionnaireId);
+        if (authentication.getName().equals(questionnaireDao.findByQuestionnaireId(questionnaireId).getUsername())) {
+            questionnaireDao.deleteDistinctByQuestionnaireId(questionnaireId);
             return "success";
         } else {
             return "denied!";
         }
     }
 
+
     @Override
     public String getQuestionList(Integer questionnaireId) {
+
+        JsonArray resList = new JsonArray();
+
         List<Question> questionList = questionDao.findAllByQuestionnaireId(questionnaireId);
-        JsonArray resList = questionList.stream()
-                .map(this::convertQuestionToJson)
-                .collect(JsonArray::new, JsonArray::add, JsonArray::addAll);
-        
+        for (Question oneQuestion : questionList
+        ) {
+
+            JsonObject oneRes = gson.fromJson(gson.toJson(oneQuestion), JsonObject.class);
+            oneRes.addProperty("isBoxSelected", false);
+            oneRes.addProperty("questionTitle", oneQuestion.getQuestionTitle());
+            oneRes.addProperty("questionDescription", oneQuestion.getQuestionDescription());
+            oneRes.addProperty("questionIndex", oneQuestion.getQuestionId() % QuestionIdDigit);
+            oneRes.addProperty("questionNullable", oneQuestion.getQuestionNullable());
+            oneRes.addProperty("questionType", oneQuestion.getQuestionType());
+
+            JsonObject temp = gson.fromJson(oneQuestion.getDetails(), JsonObject.class);
+
+            processDetails(oneRes, temp);
+
+            resList.add(oneRes);
+        }
         JsonObject res = new JsonObject();
         res.add("questionList", resList);
         return gson.toJson(res);
     }
 
-    private JsonObject convertQuestionToJson(Question question) {
-        JsonObject questionJson = gson.fromJson(gson.toJson(question), JsonObject.class);
-        questionJson.addProperty("isBoxSelected", false);
-        questionJson.addProperty("questionTitle", question.getQuestionTitle());
-        questionJson.addProperty("questionDescription", question.getQuestionDescription());
-        questionJson.addProperty("questionIndex", question.getQuestionId() % QUESTION_ID_DIGIT);
-        questionJson.addProperty("questionNullable", question.getQuestionNullable());
-        questionJson.addProperty("questionType", question.getQuestionType());
-        
-        JsonObject detailsJson = gson.fromJson(question.getDetails(), JsonObject.class);
-        processDetails(questionJson, detailsJson);
-        return questionJson;
-    }
-
-    private void processDetails(JsonObject questionJson, JsonObject detailsJson) {
-        if (detailsJson != null) {
-            detailsJson.entrySet().forEach(entry -> questionJson.add(entry.getKey(), entry.getValue()));
+    private void processDetails(JsonObject oneRes, JsonObject temp) {
+        if (temp != null) {
+            oneRes.add("questionOptions", temp.get("questionOptions").getAsJsonArray());
+            oneRes.add("frontOptions", temp.get("frontOptions").getAsJsonArray());
+            oneRes.addProperty("frontChoose", temp.get("frontChoose").getAsBoolean());
+            oneRes.addProperty("numberType", temp.get("numberType").getAsString());
+            oneRes.addProperty("defaultNumber", temp.get("defaultNumber").getAsInt());
+            oneRes.addProperty("gradeMax", temp.get("gradeMax").getAsInt());
+            oneRes.addProperty("date", temp.get("date").getAsString());
+            oneRes.addProperty("textDescription", temp.get("textDescription").getAsString());
         }
+
     }
 
     @Override
     public String saveQuestionnaireOutline(String questionnaire) {
         JsonObject questionnaireObject = gson.fromJson(questionnaire, JsonObject.class);
-        Integer questionnaireId = questionnaireObject.get("questionnaireId").getAsInt();
-        Questionnaire questionnaireEntity = questionnaireDao.findById(questionnaireId).orElseThrow();
-        
+        Questionnaire questionnaireEntity = questionnaireDao.findByQuestionnaireId(questionnaireObject.get("questionnaireId").getAsInt());
         questionnaireEntity.setTitle(questionnaireObject.get("questionnaireTitle").getAsString());
         questionnaireEntity.setDescription(questionnaireObject.get("questionnaireDescription").getAsString());
         questionnaireDao.save(questionnaireEntity);
@@ -104,31 +114,37 @@ public class CreateServiceImpl implements CreateService {
 
     @Override
     public String saveQuestionnaire(String questionnaire, String questionList) {
-        saveQuestionnaireOutline(questionnaire);
+        JsonObject questionnaireObject = gson.fromJson(questionnaire, JsonObject.class);
+        Integer questionnaireId = questionnaireObject.get("questionnaireId").getAsInt();
         JsonArray questionListArray = gson.fromJson(questionList, JsonArray.class);
-        Integer questionnaireId = gson.fromJson(questionnaire, JsonObject.class).get("questionnaireId").getAsInt();
-        
-        questionListArray.forEach(questionJson -> saveOneQuestion(questionnaireId, questionJson.getAsJsonObject()));
+
+        saveQuestionnaireOutline(questionnaire);
+
+        for (JsonElement oneQuestionJson : questionListArray
+        ) {
+            JsonObject temp = oneQuestionJson.getAsJsonObject();
+            saveOneQuestion(questionnaireId, temp);
+        }
         return null;
     }
 
     @Override
     public String getQuestionnaireOutline(Integer questionnaireId) {
-        Questionnaire questionnaire = questionnaireDao.findById(questionnaireId).orElseThrow();
         JsonObject res = new JsonObject();
-        res.add("questionnaire", gson.toJsonTree(questionnaire));
+        res.add("questionnaire", gson.fromJson(gson.toJson(questionnaireDao.findByQuestionnaireId(questionnaireId)), JsonObject.class));
         return gson.toJson(res);
     }
 
     @Override
     public String saveOneQuestion(String question, Integer questionnaireId) {
-        saveOneQuestion(questionnaireId, gson.fromJson(question, JsonObject.class));
+        JsonObject temp = gson.fromJson(question, JsonObject.class);;
+        saveOneQuestion(questionnaireId, temp);
         return null;
     }
 
     @Override
     public String releaseQuestionnaire(Integer questionnaireId) {
-        Questionnaire questionnaire = questionnaireDao.findById(questionnaireId).orElseThrow();
+        Questionnaire questionnaire = questionnaireDao.findByQuestionnaireId(questionnaireId);
         questionnaire.setStatus("collecting");
         questionnaire.setFillCount(0);
         questionnaireDao.save(questionnaire);
@@ -137,26 +153,27 @@ public class CreateServiceImpl implements CreateService {
 
     @Override
     public String closeQuestionnaire(Integer questionnaireId) {
-        Questionnaire questionnaire = questionnaireDao.findById(questionnaireId).orElseThrow();
+        Questionnaire questionnaire = questionnaireDao.findByQuestionnaireId(questionnaireId);
         questionnaire.setStatus("closed");
         questionnaire.setFillCount(0);
         questionnaireDao.save(questionnaire);
         return null;
     }
 
-    private void saveOneQuestion(Integer questionnaireId, JsonObject questionJson) {
-        Question question = new Question();
-        question.setQuestionnaireId(questionnaireId);
-        question.setQuestionDescription(questionJson.get("questionDescription").getAsString());
-        question.setQuestionTitle(questionJson.get("questionTitle").getAsString());
-        question.setQuestionId(questionnaireId * QUESTION_ID_DIGIT + questionJson.get("questionIndex").getAsInt());
-        question.setQuestionType(questionJson.get("questionType").getAsString());
-        question.setQuestionNullable(questionJson.get("questionNullable").getAsBoolean());
+    private void saveOneQuestion(Integer questionnaireId, JsonObject temp) {
+        Question oneQuestion = new Question();
+        oneQuestion.setQuestionnaireId(questionnaireId);
+        oneQuestion.setQuestionDescription(temp.get("questionDescription").getAsString());
+        oneQuestion.setQuestionTitle(temp.get("questionTitle").getAsString());
+        oneQuestion.setQuestionId(questionnaireId * QuestionIdDigit + temp.get("questionIndex").getAsInt());
+        oneQuestion.setQuestionType(temp.get("questionType").getAsString());
+        oneQuestion.setQuestionNullable(temp.get("questionNullable").getAsBoolean());
 
-        JsonObject detailsJson = new JsonObject();
-        processDetails(detailsJson, questionJson);
+        JsonObject otherJson = new JsonObject();
+        processDetails(otherJson, temp);
 
-        question.setDetails(detailsJson.toString());
-        questionDao.save(question);
+        oneQuestion.setDetails(otherJson.toString());
+        questionDao.save(oneQuestion);
     }
+
 }
